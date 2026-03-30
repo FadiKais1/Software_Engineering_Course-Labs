@@ -1,0 +1,3 @@
+javac User.java UsersApp.java
+cmd /c "java UsersApp > out.txt"
+fc.exe out.txt outcorrect.txt

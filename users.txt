@@ -1,0 +1,19 @@
+B_Kernighan@mail.com  !a01011942
+hello@world.net  01041972^H
++first_error@this.row  passw0rd%
+hello 123456789
+password@error.now ~helloworld
+thisEmailIsToLong@wow0123456789wow0123456789wow0123456789.co.il  @1234Abcd
+thisEmailIsok@wow0123456789.co.il  @1234Abcd
+passwordTooShort@mail.ru 123
+passwordToolong@mail.ru 123456789ABcdefg
+
+
+
+git branch -M main
+git remote add origin https:https://github.com/FadiKais1/lab1-user-validation.git
+git push -u origin main
+
+
+git config --global user.name "Fadi Kais"
+git config --global user.email "kaisf482@gmail.com"
