@@ -1,5 +1,8 @@
 Main.class
 UserManager.class
 WelcomeController.class
+BlockCheckerThread.class
 User.class
+LoginAttemptManager.class
+FailCounterThread.class
 LoginController.class

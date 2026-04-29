@@ -1,3 +1,4 @@
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
@@ -9,23 +10,26 @@ import javafx.stage.Stage;
 /**
  * Controller for the login screen (login.fxml).
  *
- * Handles user input from the username and password fields,
- * validates credentials against the loaded user list,
- * and transitions to the welcome screen on successful login.
+ * Extended from Lab 2 to support:
+ * - Thread A (FailCounterThread): records failed login attempts per email
+ * - Thread B (BlockCheckerThread): checks if a user is blocked before allowing login
+ * - Automatic UI blocking after n failed attempts, with a t-second cooldown
+ *
+ * The LoginController receives n and t from Main via the LoginAttemptManager.
  */
 public class LoginController {
 
-    /** Text field for the username (email) input. Injected by JavaFX. */
+    /** Text field for username (email) input. Injected by JavaFX. */
     @FXML
     private TextField usernameField;
 
-    /** Password field for the password input. Injected by JavaFX. */
+    /** Password field for password input. Injected by JavaFX. */
     @FXML
     private PasswordField passwordField;
 
     /**
-     * Label used to display error messages inline (e.g. wrong credentials).
-     * No pop-ups are used — errors appear directly in the login screen.
+     * Label for displaying error or status messages inline.
+     * Used for wrong credentials, blocked state, and countdown messages.
      */
     @FXML
     private Label errorLabel;
@@ -33,65 +37,138 @@ public class LoginController {
     /** Manages the list of valid users loaded from users.txt. */
     private UserManager userManager;
 
-    /** Reference to the primary stage, used to switch scenes. */
+    /** Reference to the primary stage for scene switching. */
     private Stage stage;
 
     /**
-     * Sets the UserManager instance used to validate login credentials.
-     *
-     * @param userManager the UserManager containing the loaded valid users
+     * Shared attempt manager — tracks fail counts and block state per email.
+     * Passed in from Main after being initialized with n and t.
      */
+    private LoginAttemptManager attemptManager;
+
     public void setUserManager(UserManager userManager) {
         this.userManager = userManager;
     }
 
-    /**
-     * Sets the primary Stage reference so this controller can switch scenes.
-     *
-     * @param stage the primary application window
-     */
     public void setStage(Stage stage) {
         this.stage = stage;
+    }
+
+    public void setAttemptManager(LoginAttemptManager attemptManager) {
+        this.attemptManager = attemptManager;
     }
 
     /**
      * Handles the login button click event.
      *
-     * Reads the username and password from the input fields and checks
-     * them against the user list via UserManager. If credentials are valid,
-     * loads and displays the welcome screen. Otherwise, shows an error message
-     * inline without using any pop-up dialog.
+     * Flow:
+     * 1. Read username and password from input fields
+     * 2. If credentials are wrong -> start Thread A to record the failure
+     *    - If this was the nth failure, show blocked message and start cooldown
+     * 3. If credentials are correct -> start Thread B to check if user is blocked
+     *    - If blocked -> show remaining block time
+     *    - If not blocked -> open Welcome screen
      */
     @FXML
     private void handleLogin() {
         String username = usernameField.getText().trim();
         String password = passwordField.getText().trim();
 
-        // Look up user by username and password
         User user = userManager.getUser(username, password);
 
-        // If no matching user found, show error in the label and stop
         if (user == null) {
-            errorLabel.setText("user or password do not match");
+            // Wrong credentials — run Thread A to record the failure
+            FailCounterThread failThread = new FailCounterThread(username, attemptManager);
+            failThread.start();
+
+            try {
+                failThread.join(); // Wait for Thread A to finish
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            int failCount = attemptManager.getFailCount(username);
+            int maxAttempts = attemptManager.getMaxAttempts();
+
+            if (attemptManager.isBlocked(username)) {
+                long remaining = attemptManager.getRemainingBlockSeconds(username);
+                errorLabel.setText("Too many failed attempts. Blocked for " + remaining + " seconds.");
+                disableLoginTemporarily(username);
+            } else {
+                int attemptsLeft = maxAttempts - failCount;
+                errorLabel.setText("Wrong credentials. " + attemptsLeft + " attempt(s) remaining.");
+            }
+
             return;
         }
 
-        // Valid login — load and switch to the welcome screen
+        // Correct credentials — run Thread B to check block status
+        BlockCheckerThread blockThread = new BlockCheckerThread(username, attemptManager);
+        blockThread.start();
+
+        try {
+            blockThread.join(); // Wait for Thread B to finish
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        if (blockThread.isBlocked()) {
+            long remaining = attemptManager.getRemainingBlockSeconds(username);
+            errorLabel.setText("Account is blocked. Try again in " + remaining + " seconds.");
+            return;
+        }
+
+        // Valid login and not blocked — open Welcome screen
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("welcome.fxml"));
             Scene scene = new Scene(loader.load());
 
-            // Pass the welcome message to the welcome screen controller
             WelcomeController controller = loader.getController();
             controller.setWelcomeMessage("Welcome " + user.getUsername());
 
-            // Replace the current scene with the welcome scene
             stage.setScene(scene);
             stage.setTitle("Welcome");
 
         } catch (Exception e) {
-            errorLabel.setText("Failed to load welcome screen");
+            errorLabel.setText("Failed to load welcome screen.");
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Disables the login form and shows a live countdown during the block period.
+     * Re-enables everything once the block expires.
+     *
+     * @param email the blocked email address
+     */
+    private void disableLoginTemporarily(String email) {
+        usernameField.setDisable(true);
+        passwordField.setDisable(true);
+
+        Thread countdownThread = new Thread(() -> {
+            while (attemptManager.isBlocked(email)) {
+                long remaining = attemptManager.getRemainingBlockSeconds(email);
+                Platform.runLater(() ->
+                    errorLabel.setText("Blocked. Try again in " + remaining + " second(s).")
+                );
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+
+            Platform.runLater(() -> {
+                usernameField.setDisable(false);
+                passwordField.setDisable(false);
+                usernameField.clear();
+                passwordField.clear();
+                errorLabel.setText("You may try again now.");
+            });
+        });
+
+        countdownThread.setDaemon(true);
+        countdownThread.start();
     }
 }
