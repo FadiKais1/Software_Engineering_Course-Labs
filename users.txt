@@ -1,0 +1,4 @@
+student@haifa.ac.il,Pass123!
+hello@gmail.com,Abc123#@
+wrongmail,1234
+gooduser@test.com,Test12$
